@@ -46,6 +46,9 @@ func decodeFileSpecStreamDict(sd *types.StreamDict) error {
 	fpl := sd.FilterPipeline
 
 	if fpl == nil {
+		if err := sd.LoadRaw(); err != nil {
+			return err
+		}
 		sd.Content = sd.Raw
 		return nil
 	}

@@ -140,6 +140,14 @@ func equalStreamDicts(sd1, sd2 *types.StreamDict, xRefTable *XRefTable, pairs []
 		return false, nil
 	}
 
+	if err := sd1.LoadRaw(); err != nil {
+		return false, err
+	}
+	if sd2 != nil {
+		if err := sd2.LoadRaw(); err != nil {
+			return false, err
+		}
+	}
 	if sd1.Raw == nil || sd2 == nil {
 		return false, errors.New("stream dict not loaded")
 	}
