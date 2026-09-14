@@ -17,7 +17,9 @@ limitations under the License.
 package pdfcpu
 
 import (
+	"errors"
 	"fmt"
+	"io"
 	"strconv"
 	"strings"
 
@@ -479,11 +481,26 @@ func writeStream(w *model.WriteContext, sd types.StreamDict) (int64, error) {
 		return 0, fmt.Errorf("failed to write raw content: %w", err)
 	}
 
-	c, err := w.Write(sd.Raw)
-	if err != nil {
-		return 0, fmt.Errorf("failed to write raw content: %w", err)
+	var c int64
+	if sd.Raw == nil && sd.RawReader != nil {
+		if sd.StreamLength == nil {
+			return 0, errors.New("failed to copy raw content: missing stream length")
+		}
+		r, err := sd.RawReader()
+		if err != nil {
+			return 0, fmt.Errorf("failed to open raw content: %w", err)
+		}
+		if c, err = io.CopyN(w, r, *sd.StreamLength); err != nil {
+			return 0, fmt.Errorf("failed to copy raw content: %w", err)
+		}
+	} else {
+		n, err := w.Write(sd.Raw)
+		if err != nil {
+			return 0, fmt.Errorf("failed to write raw content: %w", err)
+		}
+		c = int64(n)
 	}
-	if int64(c) != *sd.StreamLength {
+	if c != *sd.StreamLength {
 		return 0, fmt.Errorf("failed to write raw content: %d bytes written - streamlength:%d", c, *sd.StreamLength)
 	}
 
@@ -569,6 +586,9 @@ func writeStreamDictObject(ctx *model.Context, objNr, genNr int, sd types.Stream
 		!isXRefStreamDict &&
 		!(len(sd.FilterPipeline) == 1 && sd.FilterPipeline[0].Name == "Crypt") {
 
+		if err = sd.LoadRaw(); err != nil {
+			return err
+		}
 		if sd.Raw, err = encryptStream(sd.Raw, objNr, genNr, ctx.EncKey, ctx.AES4Streams, ctx.E.R); err != nil {
 			return err
 		}

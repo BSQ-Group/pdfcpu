@@ -486,6 +486,9 @@ func img(
 	resourceID, filters, lastFilter string,
 	objNr int) (*model.Image, error) {
 	if sd.FilterPipeline == nil {
+		if err := sd.LoadRaw(); err != nil {
+			return nil, fmt.Errorf("image obj#%d: %w", objNr, err)
+		}
 		sd.Content = sd.Raw
 	} else {
 		if err := decodeImage(ctx, sd, filters, lastFilter, objNr); err != nil {

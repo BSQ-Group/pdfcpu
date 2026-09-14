@@ -45,6 +45,58 @@ type StreamDict struct {
 	//DCTImage          image.Image
 	IsPageContent bool
 	CSComponents  int
+
+	// RawReader optionally opens the encoded stream bytes at their source.
+	// It is used only if Raw is nil and may be called more than once.
+	// Each call returns a new reader positioned at the start of at least StreamLength bytes.
+	// The returned reader is never closed, so it should read a source the caller owns and closes,
+	// such as an io.SectionReader over an open file, rather than open a file per call.
+	RawReader func() (io.Reader, error)
+}
+
+// HasRaw returns true if the encoded bytes are available via Raw or RawReader.
+func (sd *StreamDict) HasRaw() bool {
+	return sd.Raw != nil || sd.RawReader != nil
+}
+
+// LoadRaw reads the encoded bytes from RawReader into Raw if Raw is nil.
+// It reads exactly StreamLength bytes if StreamLength is set and fails on a shorter source.
+// LoadRaw is not safe for concurrent use.
+func (sd *StreamDict) LoadRaw() error {
+	if sd.Raw != nil || sd.RawReader == nil {
+		return nil
+	}
+	r, err := sd.RawReader()
+	if err != nil {
+		return fmt.Errorf("open raw content: %w", err)
+	}
+	var b []byte
+	if sd.StreamLength != nil {
+		b = make([]byte, *sd.StreamLength)
+		_, err = io.ReadFull(r, b)
+	} else {
+		b, err = io.ReadAll(r)
+	}
+	if err != nil {
+		return fmt.Errorf("read raw content: %w", err)
+	}
+	sd.Raw = b
+	return nil
+}
+
+// rawReader returns a reader for the encoded bytes limited to StreamLength if set.
+func (sd *StreamDict) rawReader() (io.Reader, error) {
+	if sd.Raw != nil || sd.RawReader == nil {
+		return bytes.NewReader(sd.Raw), nil
+	}
+	r, err := sd.RawReader()
+	if err != nil {
+		return nil, fmt.Errorf("open raw content: %w", err)
+	}
+	if sd.StreamLength != nil {
+		r = io.LimitReader(r, *sd.StreamLength)
+	}
+	return r, nil
 }
 
 // NewStreamDict creates a new PDFStreamDict for given PDFDict, stream offset and length.
@@ -60,6 +112,7 @@ func NewStreamDict(d Dict, streamOffset int64, streamLength *int64, streamLength
 		//nil,
 		false,
 		0,
+		nil,
 	}
 }
 
@@ -250,7 +303,7 @@ func parmsForFilter(d Dict) map[string]int {
 
 // Encode applies sd's filter pipeline to sd.Content in order to produce sd.Raw.
 func (sd *StreamDict) Encode() error {
-	if sd.Content == nil && sd.Raw != nil {
+	if sd.Content == nil && sd.HasRaw() {
 		// Not decoded yet, no need to encode.
 		return nil
 	}
@@ -363,8 +416,11 @@ func (sd *StreamDict) DecodeWithLimit(maxDecodeBytes int64) error {
 }
 
 func (sd *StreamDict) decodeLength(maxLen, maxDecodeBytes int64) ([]byte, error) {
-	var b, c io.Reader
-	b = bytes.NewReader(sd.Raw)
+	var c io.Reader
+	b, err := sd.rawReader()
+	if err != nil {
+		return nil, err
+	}
 
 	// Apply each filter in the pipeline to result of preceding filter.
 	for idx, f := range sd.FilterPipeline {
@@ -457,6 +513,9 @@ func (sd *StreamDict) DecodeLengthWithLimit(maxLen, maxDecodeBytes int64) ([]byt
 	// No filter, sole DCT except CMYK, or terminal opaque image filters:
 	// nothing to decode for consumers that can preserve the original image stream.
 	if fpl == nil || len(fpl) == 1 && ((fpl[0].Name == filter.DCT && sd.CSComponents != 4) || preserveEncodedImageFilter(fpl[0].Name)) {
+		if err := sd.LoadRaw(); err != nil {
+			return nil, err
+		}
 		sd.Content = sd.Raw
 		//fmt.Printf("decodedStream returning %d(#%02x)bytes: \n%s\n", len(sd.Content), len(sd.Content), hex.Dump(sd.Content))
 		if maxLen < 0 {

@@ -54,8 +54,14 @@ func optimizeContentStreamUsage(ctx *model.Context, sd *types.StreamDict, objNr 
 		return nil, nil
 	}
 
+	if err := sd.LoadRaw(); err != nil {
+		return nil, err
+	}
 	for _, objNr := range cachedObjNrs {
 		sd1 := f[objNr]
+		if err := sd1.LoadRaw(); err != nil {
+			return nil, err
+		}
 		if bytes.Equal(sd.Raw, sd1.Raw) {
 			ir := types.NewIndirectRef(objNr, 0)
 			ctx.IncrementRefCount(ir)
@@ -446,19 +452,22 @@ func optimizeFontResourcesDict(ctx *model.Context, rDict types.Dict, pageNr int,
 	return nil
 }
 
-func imageObjectHashes(ctx *model.Context) map[[sha256.Size]byte][]int {
+func imageObjectHashes(ctx *model.Context) (map[[sha256.Size]byte][]int, error) {
 	hashes := ctx.Optimize.ImageObjectHashes
 	if hashes != nil {
-		return hashes
+		return hashes, nil
 	}
 
 	hashes = map[[sha256.Size]byte][]int{}
 	for objNr, imageObject := range ctx.Optimize.ImageObjects {
+		if err := imageObject.ImageDict.LoadRaw(); err != nil {
+			return nil, fmt.Errorf("image obj#%d: %w", objNr, err)
+		}
 		h := sha256.Sum256(imageObject.ImageDict.Raw)
 		hashes[h] = append(hashes[h], objNr)
 	}
 	ctx.Optimize.ImageObjectHashes = hashes
-	return hashes
+	return hashes, nil
 }
 
 // handleDuplicateImageObject returns nil or the object number of the registered image if it matches this image.
@@ -491,8 +500,14 @@ func handleDuplicateImageObject(ctx *model.Context, imageDict *types.StreamDict,
 	}
 
 	// Process image dict, check if this is a duplicate.
+	if err := imageDict.LoadRaw(); err != nil {
+		return nil, false, fmt.Errorf("image obj#%d: %w", objNr, err)
+	}
 	h := sha256.Sum256(imageDict.Raw)
-	imageHashes := imageObjectHashes(ctx)
+	imageHashes, err := imageObjectHashes(ctx)
+	if err != nil {
+		return nil, false, err
+	}
 	for _, imageObjNr := range imageHashes[h] {
 		imageObject := ctx.Optimize.ImageObjects[imageObjNr]
 

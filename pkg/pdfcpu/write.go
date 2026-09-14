@@ -1110,7 +1110,7 @@ func handleEncryption(ctx *model.Context) error {
 	}
 
 	// Write xref stream only if using xref streams.
-	if ctx.Encrypt != nil && ctx.EncKey != nil && !ctx.Read.UsingXRefStreams {
+	if ctx.Encrypt != nil && ctx.EncKey != nil && (ctx.Read == nil || !ctx.Read.UsingXRefStreams) {
 		ctx.WriteObjectStream = false
 		ctx.WriteXRefStream = false
 	}
